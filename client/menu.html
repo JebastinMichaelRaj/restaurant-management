@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Menu - Saffron Table</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="brand">🍽️ Saffron Table</div>
+  <div id="nav"></div>
+</nav>
+
+<div class="container">
+  <h1>Our Menu</h1>
+
+  <div class="flex" style="margin-bottom:16px; flex-wrap:wrap;">
+    <input type="text" id="searchInput" placeholder="Search dishes..." style="max-width:260px; margin-bottom:0;" />
+    <select id="categoryFilter" style="max-width:200px; margin-bottom:0;">
+      <option value="">All Categories</option>
+      <option value="Starters">Starters</option>
+      <option value="Main Course">Main Course</option>
+      <option value="Desserts">Desserts</option>
+      <option value="Beverages">Beverages</option>
+    </select>
+    <span id="cartCount" class="badge available" style="margin-left:auto;">🛒 0 items</span>
+  </div>
+
+  <div id="menuGrid" class="grid"></div>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/auth.js"></script>
+<script>
+renderNav('menu');
+let cart = JSON.parse(localStorage.getItem('cart') || '[]');
+updateCartCount();
+
+async function loadMenu() {
+  const search = document.getElementById('searchInput').value;
+  const category = document.getElementById('categoryFilter').value;
+  const params = new URLSearchParams();
+  if (search) params.append('search', search);
+  if (category) params.append('category', category);
+  params.append('available', 'true');
+
+  try {
+    const items = await apiRequest(`/menu?${params.toString()}`, { auth: false });
+    renderMenu(items);
+  } catch (err) {
+    document.getElementById('menuGrid').innerHTML = `<p class="error">${err.message}</p>`;
+  }
+}
+
+function renderMenu(items) {
+  const grid = document.getElementById('menuGrid');
+  if (!items.length) {
+    grid.innerHTML = '<p class="muted">No dishes found.</p>';
+    return;
+  }
+  grid.innerHTML = items.map(item => `
+    <div class="menu-card">
+      <div class="flex-between">
+        <h3>${item.name}</h3>
+        <span class="muted">₹${item.price}</span>
+      </div>
+      <p class="muted">${item.category}</p>
+      <p>${item.description || ''}</p>
+      <button class="btn" onclick="addToCart('${item._id}', '${item.name.replace(/'/g, "\\'")}', ${item.price})">Add to Cart</button>
+    </div>
+  `).join('');
+}
+
+function addToCart(foodId, name, price) {
+  if (!isLoggedIn()) {
+    alert('Please login to place an order.');
+    window.location.href = 'index.html';
+    return;
+  }
+  const existing = cart.find(i => i.foodId === foodId);
+  if (existing) {
+    existing.quantity += 1;
+  } else {
+    cart.push({ foodId, name, price, quantity: 1, customization: '' });
+  }
+  localStorage.setItem('cart', JSON.stringify(cart));
+  updateCartCount();
+}
+
+function updateCartCount() {
+  const count = cart.reduce((sum, i) => sum + i.quantity, 0);
+  document.getElementById('cartCount').textContent = `🛒 ${count} items`;
+}
+
+document.getElementById('searchInput').addEventListener('input', debounce(loadMenu, 300));
+document.getElementById('categoryFilter').addEventListener('change', loadMenu);
+
+function debounce(fn, delay) {
+  let t;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), delay); };
+}
+
+loadMenu();
+</script>
+</body>
+</html>

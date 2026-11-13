@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Admin Dashboard - Saffron Table</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="brand">🍽️ Saffron Table</div>
+  <div id="nav"></div>
+</nav>
+
+<div class="container">
+  <h1>📊 Admin Dashboard</h1>
+
+  <div class="grid" id="statsGrid"></div>
+
+  <div class="tabs">
+    <button class="tab-btn active" onclick="showTab('overview', this)">Overview</button>
+    <button class="tab-btn" onclick="showTab('menu', this)">Menu Management</button>
+    <button class="tab-btn" onclick="showTab('inventory', this)">Inventory</button>
+    <button class="tab-btn" onclick="showTab('staff', this)">Staff</button>
+  </div>
+
+  <div id="tab-overview" class="tab-content">
+    <div class="card">
+      <h3>🏆 Popular Dishes</h3>
+      <div id="popularDishes"></div>
+    </div>
+  </div>
+
+  <div id="tab-menu" class="tab-content" style="display:none;">
+    <div class="card">
+      <h3>Add / Edit Menu Item</h3>
+      <input type="hidden" id="foodId" />
+      <label>Name</label><input type="text" id="foodName" />
+      <label>Category</label>
+      <select id="foodCategory">
+        <option>Starters</option><option>Main Course</option><option>Desserts</option><option>Beverages</option>
+      </select>
+      <label>Price (₹)</label><input type="number" id="foodPrice" />
+      <label>Description</label><textarea id="foodDescription" rows="2"></textarea>
+      <label class="flex"><input type="checkbox" id="foodAvailable" style="width:auto;" checked /> Available</label>
+      <button class="btn" onclick="saveFood()">Save Item</button>
+      <button class="btn outline" onclick="resetFoodForm()">Clear</button>
+    </div>
+    <div id="menuList" class="grid"></div>
+  </div>
+
+  <div id="tab-inventory" class="tab-content" style="display:none;">
+    <div class="card">
+      <h3>Add / Edit Inventory Item</h3>
+      <input type="hidden" id="invId" />
+      <label>Ingredient Name</label><input type="text" id="invName" />
+      <label>Stock Level</label><input type="number" id="invStock" />
+      <label>Unit</label><input type="text" id="invUnit" placeholder="kg / L / pcs" />
+      <label>Reorder Threshold</label><input type="number" id="invThreshold" />
+      <button class="btn" onclick="saveInventory()">Save Item</button>
+      <button class="btn outline" onclick="resetInvForm()">Clear</button>
+    </div>
+    <div id="inventoryList"></div>
+  </div>
+
+  <div id="tab-staff" class="tab-content" style="display:none;">
+    <div class="card">
+      <h3>Add Staff Member</h3>
+      <label>Name</label><input type="text" id="staffName" />
+      <label>Email</label><input type="email" id="staffEmail" />
+      <label>Password</label><input type="password" id="staffPassword" />
+      <label>Role</label>
+      <select id="staffRole"><option value="waiter">Waiter</option><option value="chef">Chef</option><option value="admin">Admin</option></select>
+      <button class="btn" onclick="saveStaff()">Add Staff</button>
+      <div class="error" id="staffError"></div>
+    </div>
+    <div id="staffList"></div>
+  </div>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/auth.js"></script>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script src="js/socket-client.js"></script>
+<script>
+renderNav('admin');
+requireAuth();
+requireRole('admin');
+
+function showTab(name, btn) {
+  document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
+  document.getElementById(`tab-${name}`).style.display = 'block';
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  if (name === 'menu') loadMenuList();
+  if (name === 'inventory') loadInventory();
+  if (name === 'staff') loadStaff();
+}
+
+async function loadDashboard() {
+  try {
+    const stats = await apiRequest('/admin/dashboard');
+    document.getElementById('statsGrid').innerHTML = `
+      <div class="card"><h3>₹${stats.dailySales.toFixed(2)}</h3><p class="muted">Today's Sales</p></div>
+      <div class="card"><h3>${stats.ordersToday}</h3><p class="muted">Orders Today</p></div>
+      <div class="card"><h3>${stats.pendingOrders}</h3><p class="muted">Pending Orders</p></div>
+      <div class="card"><h3>${stats.totalCustomers}</h3><p class="muted">Total Customers</p></div>
+      <div class="card"><h3>${stats.totalMenuItems}</h3><p class="muted">Menu Items</p></div>
+    `;
+    document.getElementById('popularDishes').innerHTML = stats.popularDishes.length
+      ? `<table><thead><tr><th>Dish</th><th>Units Ordered</th></tr></thead><tbody>
+          ${stats.popularDishes.map(d => `<tr><td>${d._id}</td><td>${d.totalOrdered}</td></tr>`).join('')}
+         </tbody></table>`
+      : '<p class="muted">No orders yet.</p>';
+  } catch (err) {
+    document.getElementById('statsGrid').innerHTML = `<p class="error">${err.message}</p>`;
+  }
+}
+
+// ---- Menu Management ----
+async function loadMenuList() {
+  const items = await apiRequest('/menu');
+  document.getElementById('menuList').innerHTML = items.map(i => `
+    <div class="menu-card">
+      <div class="flex-between"><h3>${i.name}</h3><span>₹${i.price}</span></div>
+      <p class="muted">${i.category} ${i.available ? '' : '· Unavailable'}</p>
+      <div class="flex">
+        <button class="btn outline" onclick='editFood(${JSON.stringify(i)})'>Edit</button>
+        <button class="btn danger" onclick="deleteFood('${i._id}')">Delete</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function editFood(item) {
+  document.getElementById('foodId').value = item._id;
+  document.getElementById('foodName').value = item.name;
+  document.getElementById('foodCategory').value = item.category;
+  document.getElementById('foodPrice').value = item.price;
+  document.getElementById('foodDescription').value = item.description || '';
+  document.getElementById('foodAvailable').checked = item.available;
+}
+
+function resetFoodForm() {
+  document.getElementById('foodId').value = '';
+  document.getElementById('foodName').value = '';
+  document.getElementById('foodPrice').value = '';
+  document.getElementById('foodDescription').value = '';
+  document.getElementById('foodAvailable').checked = true;
+}
+
+async function saveFood() {
+  const id = document.getElementById('foodId').value;
+  const body = {
+    name: document.getElementById('foodName').value,
+    category: document.getElementById('foodCategory').value,
+    price: Number(document.getElementById('foodPrice').value),
+    description: document.getElementById('foodDescription').value,
+    available: document.getElementById('foodAvailable').checked,
+  };
+  try {
+    if (id) await apiRequest(`/menu/${id}`, { method: 'PUT', body });
+    else await apiRequest('/menu', { method: 'POST', body });
+    resetFoodForm();
+    loadMenuList();
+    showToast('Menu item saved.');
+  } catch (err) { alert(err.message); }
+}
+
+async function deleteFood(id) {
+  if (!confirm('Delete this item?')) return;
+  await apiRequest(`/menu/${id}`, { method: 'DELETE' });
+  loadMenuList();
+}
+
+// ---- Inventory ----
+async function loadInventory() {
+  const items = await apiRequest('/inventory');
+  document.getElementById('inventoryList').innerHTML = `
+    <table><thead><tr><th>Ingredient</th><th>Stock</th><th>Unit</th><th>Threshold</th><th></th></tr></thead>
+    <tbody>${items.map(i => `
+      <tr style="${i.stockLevel <= i.reorderThreshold ? 'background:#ffe3e3;' : ''}">
+        <td>${i.ingredientName}</td><td>${i.stockLevel}</td><td>${i.unit}</td><td>${i.reorderThreshold}</td>
+        <td>
+          <button class="btn outline" onclick='editInv(${JSON.stringify(i)})'>Edit</button>
+          <button class="btn danger" onclick="deleteInv('${i._id}')">Delete</button>
+        </td>
+      </tr>`).join('')}</tbody></table>`;
+}
+
+function editInv(item) {
+  document.getElementById('invId').value = item._id;
+  document.getElementById('invName').value = item.ingredientName;
+  document.getElementById('invStock').value = item.stockLevel;
+  document.getElementById('invUnit').value = item.unit;
+  document.getElementById('invThreshold').value = item.reorderThreshold;
+}
+
+function resetInvForm() {
+  document.getElementById('invId').value = '';
+  document.getElementById('invName').value = '';
+  document.getElementById('invStock').value = '';
+  document.getElementById('invUnit').value = '';
+  document.getElementById('invThreshold').value = '';
+}
+
+async function saveInventory() {
+  const id = document.getElementById('invId').value;
+  const body = {
+    ingredientName: document.getElementById('invName').value,
+    stockLevel: Number(document.getElementById('invStock').value),
+    unit: document.getElementById('invUnit').value,
+    reorderThreshold: Number(document.getElementById('invThreshold').value),
+  };
+  try {
+    if (id) await apiRequest(`/inventory/${id}`, { method: 'PUT', body });
+    else await apiRequest('/inventory', { method: 'POST', body });
+    resetInvForm();
+    loadInventory();
+    showToast('Inventory updated.');
+  } catch (err) { alert(err.message); }
+}
+
+async function deleteInv(id) {
+  if (!confirm('Delete this ingredient?')) return;
+  await apiRequest(`/inventory/${id}`, { method: 'DELETE' });
+  loadInventory();
+}
+
+// ---- Staff ----
+async function loadStaff() {
+  const staff = await apiRequest('/admin/staff');
+  document.getElementById('staffList').innerHTML = `
+    <table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Active</th></tr></thead>
+    <tbody>${staff.map(s => `<tr><td>${s.name}</td><td>${s.email}</td><td>${s.role}</td><td>${s.isActive ? 'Yes' : 'No'}</td></tr>`).join('')}</tbody></table>`;
+}
+
+async function saveStaff() {
+  const body = {
+    name: document.getElementById('staffName').value,
+    email: document.getElementById('staffEmail').value,
+    password: document.getElementById('staffPassword').value,
+    role: document.getElementById('staffRole').value,
+  };
+  const errorEl = document.getElementById('staffError');
+  errorEl.textContent = '';
+  try {
+    await apiRequest('/admin/staff', { method: 'POST', body });
+    loadStaff();
+    showToast('Staff member added.');
+  } catch (err) {
+    errorEl.textContent = err.message;
+  }
+}
+
+socket.on('inventory:low', () => { if (document.getElementById('tab-inventory').style.display !== 'none') loadInventory(); });
+socket.on('order:new', loadDashboard);
+socket.on('order:paid', loadDashboard);
+
+loadDashboard();
+</script>
+</body>
+</html>

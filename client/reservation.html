@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Reserve a Table - Saffron Table</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="brand">🍽️ Saffron Table</div>
+  <div id="nav"></div>
+</nav>
+
+<div class="container">
+  <h1>Reserve a Table</h1>
+
+  <div class="card" style="max-width:420px;">
+    <label>Date</label>
+    <input type="date" id="resDate" />
+    <label>Time Slot</label>
+    <select id="resTimeSlot">
+      <option value="12:00-13:00">12:00 PM - 1:00 PM</option>
+      <option value="13:00-14:00">1:00 PM - 2:00 PM</option>
+      <option value="19:00-20:00">7:00 PM - 8:00 PM</option>
+      <option value="20:00-21:00">8:00 PM - 9:00 PM</option>
+      <option value="21:00-22:00">9:00 PM - 10:00 PM</option>
+    </select>
+    <label>Number of Guests</label>
+    <input type="number" id="resGuests" min="1" value="2" />
+    <button class="btn" onclick="checkAvailability()" style="width:100%;">Check Availability</button>
+    <div class="error" id="resError"></div>
+  </div>
+
+  <div id="tablesGrid" class="grid"></div>
+
+  <h2 style="margin-top:32px;">My Reservations</h2>
+  <div id="myReservations"></div>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/auth.js"></script>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script src="js/socket-client.js"></script>
+<script>
+renderNav('reservation');
+requireAuth();
+
+document.getElementById('resDate').min = new Date().toISOString().split('T')[0];
+document.getElementById('resDate').value = new Date().toISOString().split('T')[0];
+
+async function checkAvailability() {
+  const date = document.getElementById('resDate').value;
+  const timeSlot = document.getElementById('resTimeSlot').value;
+  const errorEl = document.getElementById('resError');
+  errorEl.textContent = '';
+
+  if (!date) { errorEl.textContent = 'Please select a date.'; return; }
+
+  try {
+    const tables = await apiRequest(`/tables/availability?date=${date}&timeSlot=${encodeURIComponent(timeSlot)}`);
+    renderTables(tables, date, timeSlot);
+  } catch (err) {
+    errorEl.textContent = err.message;
+  }
+}
+
+function renderTables(tables, date, timeSlot) {
+  const grid = document.getElementById('tablesGrid');
+  const guests = document.getElementById('resGuests').value;
+  grid.innerHTML = tables.map(t => `
+    <div class="card">
+      <div class="flex-between">
+        <h3>Table ${t.tableNumber}</h3>
+        <span class="badge ${t.isAvailable ? 'available' : 'reserved'}">${t.isAvailable ? 'Available' : 'Booked'}</span>
+      </div>
+      <p class="muted">Seats up to ${t.capacity} guests</p>
+      <button class="btn" ${!t.isAvailable ? 'disabled' : ''} onclick="reserve('${t._id}', '${date}', '${timeSlot}')">Reserve</button>
+    </div>
+  `).join('');
+}
+
+async function reserve(tableId, date, timeSlot) {
+  const guests = Number(document.getElementById('resGuests').value);
+  const errorEl = document.getElementById('resError');
+  errorEl.textContent = '';
+  try {
+    await apiRequest('/tables/reserve', { method: 'POST', body: { tableId, date, timeSlot, guests } });
+    showToast('Table reserved successfully!');
+    checkAvailability();
+    loadMyReservations();
+  } catch (err) {
+    errorEl.textContent = err.message;
+  }
+}
+
+async function loadMyReservations() {
+  const container = document.getElementById('myReservations');
+  try {
+    const reservations = await apiRequest('/tables/reserve/my');
+    if (!reservations.length) {
+      container.innerHTML = '<p class="muted">No reservations yet.</p>';
+      return;
+    }
+    container.innerHTML = `
+      <table>
+        <thead><tr><th>Table</th><th>Date</th><th>Time</th><th>Guests</th><th>Status</th><th></th></tr></thead>
+        <tbody>
+          ${reservations.map(r => `
+            <tr>
+              <td>${r.table?.tableNumber ?? '-'}</td>
+              <td>${r.date}</td>
+              <td>${r.timeSlot}</td>
+              <td>${r.guests}</td>
+              <td><span class="badge ${r.status}">${r.status}</span></td>
+              <td>${r.status === 'confirmed' ? `<button class="btn danger" onclick="cancelReservation('${r._id}')">Cancel</button>` : ''}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  } catch (err) {
+    container.innerHTML = `<p class="error">${err.message}</p>`;
+  }
+}
+
+async function cancelReservation(id) {
+  try {
+    await apiRequest(`/tables/reserve/${id}/cancel`, { method: 'PATCH' });
+    showToast('Reservation cancelled.');
+    loadMyReservations();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+socket.on('reservation:created', () => checkAvailability());
+socket.on('reservation:cancelled', () => checkAvailability());
+
+checkAvailability();
+loadMyReservations();
+</script>
+</body>
+</html>

@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Kitchen Dashboard - Saffron Table</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="brand">🍽️ Saffron Table</div>
+  <div id="nav"></div>
+</nav>
+
+<div class="container">
+  <h1>👨‍🍳 Kitchen Dashboard</h1>
+  <p class="muted">Orders update instantly as customers place them.</p>
+
+  <div class="tabs">
+    <button class="tab-btn active" onclick="filterOrders('all', this)">All</button>
+    <button class="tab-btn" onclick="filterOrders('pending', this)">Pending</button>
+    <button class="tab-btn" onclick="filterOrders('preparing', this)">Preparing</button>
+    <button class="tab-btn" onclick="filterOrders('ready', this)">Ready</button>
+    <button class="tab-btn" onclick="filterOrders('served', this)">Served</button>
+  </div>
+
+  <div id="ordersGrid" class="grid"></div>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/auth.js"></script>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script src="js/socket-client.js"></script>
+<script>
+renderNav('kitchen');
+requireAuth();
+requireRole('chef', 'admin', 'waiter');
+
+let currentFilter = 'all';
+let allOrders = [];
+
+async function loadOrders() {
+  try {
+    const params = currentFilter !== 'all' ? `?status=${currentFilter}` : '';
+    allOrders = await apiRequest(`/orders${params}`);
+    renderOrders();
+  } catch (err) {
+    document.getElementById('ordersGrid').innerHTML = `<p class="error">${err.message}</p>`;
+  }
+}
+
+function renderOrders() {
+  const grid = document.getElementById('ordersGrid');
+  if (!allOrders.length) {
+    grid.innerHTML = '<p class="muted">No orders in this category.</p>';
+    return;
+  }
+
+  const nextStatusMap = { pending: 'preparing', preparing: 'ready', ready: 'served' };
+
+  grid.innerHTML = allOrders.map(o => `
+    <div class="card">
+      <div class="flex-between">
+        <strong>Order #${o._id.slice(-6).toUpperCase()}</strong>
+        <span class="badge ${o.status}">${o.status}</span>
+      </div>
+      <p class="muted">${o.customer?.name || 'Customer'} · ${new Date(o.createdAt).toLocaleTimeString()}</p>
+      <ul>${o.items.map(i => `<li>${i.name} × ${i.quantity}${i.customization ? ` (${i.customization})` : ''}</li>`).join('')}</ul>
+      <div class="flex-between"><span>Total</span><strong>₹${o.grandTotal}</strong></div>
+      ${nextStatusMap[o.status] ? `<button class="btn secondary" style="margin-top:10px;width:100%;" onclick="advanceStatus('${o._id}', '${nextStatusMap[o.status]}')">Mark as ${nextStatusMap[o.status]}</button>` : ''}
+    </div>
+  `).join('');
+}
+
+async function advanceStatus(orderId, status) {
+  try {
+    await apiRequest(`/orders/${orderId}/status`, { method: 'PATCH', body: { status } });
+    loadOrders();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+function filterOrders(status, btn) {
+  currentFilter = status;
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  loadOrders();
+}
+
+// Real-time: new orders and status changes push instantly to the dashboard
+socket.on('order:new', ({ order }) => {
+  showToast(`New order received: #${order._id.slice(-6).toUpperCase()}`);
+  loadOrders();
+});
+socket.on('order:statusUpdated', () => loadOrders());
+socket.on('inventory:low', ({ item, stockLevel }) => {
+  showToast(`⚠️ Low stock: ${item} (${stockLevel} left)`);
+});
+
+loadOrders();
+setInterval(loadOrders, 15000); // fallback poll in case a socket event is missed
+</script>
+</body>
+</html>
